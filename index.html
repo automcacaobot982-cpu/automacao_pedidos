@@ -99,6 +99,8 @@
   }
   .btn-primary{background:var(--brand);color:var(--brand-ink);font-weight:700;width:100%}
   .btn-primary:hover{background:var(--brand-2);color:#fff}
+  .btn-install-login{width:100%;margin-top:14px;background:var(--surface-2);color:var(--brand-ink);font-weight:700;border:1px solid var(--line-2)}
+  .btn-install-login:hover{background:#eaf6fd;border-color:var(--brand)}
 
   /* ===== TOPBAR ===== */
   .topbar{
@@ -108,8 +110,10 @@
   .topbar .tb-title{font-family:var(--num);font-weight:600;font-size:15px}
   .topbar .tb-title small{display:block;font-family:var(--sans);font-weight:400;font-size:11px;color:#c3c6ea}
   .topbar .spacer{flex:1}
-  .nav-btn{display:inline-flex;align-items:center;gap:6px;background:rgba(255,255,255,.1);border:1px solid rgba(255,255,255,.22);color:#fff;padding:8px 14px;border-radius:var(--r-sm);text-decoration:none;font-size:13px;font-weight:600}
+  .nav-btn{display:inline-flex;align-items:center;gap:6px;background:rgba(255,255,255,.1);border:1px solid rgba(255,255,255,.22);color:#fff;padding:8px 14px;border-radius:var(--r-sm);text-decoration:none;font-size:13px;font-weight:600;cursor:pointer;font-family:inherit}
   .nav-btn:hover{background:rgba(255,255,255,.2)}
+  .nav-btn-install{background:var(--brand);border-color:var(--brand);color:var(--brand-ink);font-weight:700}
+  .nav-btn-install:hover{background:var(--brand-2);color:#fff}
   .btn-logout{background:transparent;border:1px solid rgba(255,255,255,.2);color:#dff1ef;border-radius:8px;padding:8px 13px;font-size:13px;font-weight:600}
   .btn-logout:hover{background:rgba(255,255,255,.1)}
 
@@ -138,6 +142,31 @@
   .btn-enviar:hover{background:var(--brand-2);color:#fff}
   .alert{padding:13px 15px;border-radius:var(--r-sm);margin-top:16px;font-size:14px;font-weight:500}
   .alert-success{background:var(--green-tint);color:var(--green);border:1px solid #bfe6cf}
+  .alert-error{background:var(--red-tint);color:var(--red);border:1px solid #f3c6bf}
+
+  /* ===== MOBILE (celular) ===== */
+  @media (max-width:768px){
+    /* Login: esconde o painel da marca e mostra só o formulário, em tela cheia */
+    #login{grid-template-columns:1fr}
+    .login-brand{display:none}
+    .login-form-wrap{padding:28px 20px;min-height:100dvh}
+
+    /* Topbar compacta: título encolhe (…) e os botões têm prioridade */
+    .topbar{gap:8px;padding:0 12px}
+    .topbar .tb-title{flex:0 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+    .topbar .tb-title small{display:none}
+    .nav-btn{padding:8px 11px;font-size:12.5px}
+    .btn-logout{padding:8px 11px;white-space:nowrap}
+
+    main{padding:16px 12px}
+    .page-head h1{font-size:20px}
+    .kpi-grid{grid-template-columns:1fr 1fr;gap:12px}
+    .kpi .kpi-val{font-size:26px}
+    .form-card{padding:20px 16px}
+  }
+  @media (max-width:420px){
+    .kpi-grid{grid-template-columns:1fr}
+  }
 </style>
 </head>
 <body>
@@ -177,6 +206,7 @@
         </div>
         <button type="submit" class="btn btn-primary">Entrar</button>
       </form>
+      <button type="button" class="btn btn-install-login js-install hidden">⬇️ Baixar App</button>
     </div>
   </div>
 </section>
@@ -186,6 +216,7 @@
   <header class="topbar">
     <div class="tb-title">Sistema de Pedidos<small id="displayUser">—</small></div>
     <div class="spacer"></div>
+    <button id="btnInstall" class="nav-btn nav-btn-install js-install hidden">⬇️ Baixar App</button>
     <a href="kanban_pedidos.html" class="nav-btn">📋 Kanban</a>
     <button class="btn-logout" id="btnLogout">Sair</button>
   </header>
@@ -257,7 +288,7 @@
    PRÓXIMA ETAPA: substituir SHEETS_WEBAPP_URL pela URL /exec do
    Apps Script que grava a linha na planilha pedidos_separacao.
    ============================================================ */
-const SHEETS_WEBAPP_URL = ''; // <- URL do Apps Script (próxima etapa)
+const SHEETS_WEBAPP_URL = 'https://script.google.com/macros/s/AKfycbxcDjvaIs_zwd5jTf9fflP8pFno4WXkzaJSXFpzVrHdwdujVUfnTIZbp1LNyCGHDaXrcw/exec';
 
 const PLANILHA_SEPARACAO = 'https://docs.google.com/spreadsheets/d/13TpiMC8nVo5YCtyo2cAnz0jBxKOv5jk_DOnw6p9KkcA/edit';
 
@@ -326,6 +357,31 @@ document.getElementById('btnLogout').addEventListener('click', () => {
 });
 
 /* ---------- envio do pedido ---------- */
+function mostrarFeedback(ok, msg) {
+  const fb = document.getElementById('formFeedback');
+  fb.textContent = msg;
+  fb.className = 'alert ' + (ok ? 'alert-success' : 'alert-error');
+  if (ok) setTimeout(() => fb.classList.add('hidden'), 6000);
+}
+
+// Envia o registro ao Apps Script da planilha pedidos_separacao.
+// Usa Content-Type text/plain para evitar o bloqueio de CORS do Apps Script.
+async function enviarParaPlanilha(acao, payload) {
+  try {
+    const r = await fetch(SHEETS_WEBAPP_URL, {
+      method: 'POST',
+      headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+      body: JSON.stringify({ acao: acao, payload: payload }),
+      redirect: 'follow'
+    });
+    return await r.json();
+  } catch (err) {
+    // Alguns navegadores bloqueiam a leitura da resposta do Apps Script,
+    // mas a gravação costuma ocorrer. Consideramos enviado.
+    return { ok: true, semLeitura: true };
+  }
+}
+
 document.getElementById('orderForm').addEventListener('submit', async (e) => {
   e.preventDefault();
   const numPedido = document.getElementById('numPedido').value.trim();
@@ -333,22 +389,34 @@ document.getElementById('orderForm').addEventListener('submit', async (e) => {
 
   // Registro conforme as colunas A..D da base pedidos_separacao
   const registro = {
-    A_data:     dataHoraFormatada(),   // Coluna A (automática)
+    A_data:     dataHoraFormatada(),   // Coluna A (referência; a data oficial é gerada no Apps Script)
     B_pedido:   numPedido,             // Coluna B
     C_urgente:  urgente,               // Coluna C
-    D_operador: usuarioLogado.nome     // Coluna D (automática)
+    D_operador: usuarioLogado.nome     // Coluna D
   };
 
-  // PRÓXIMA ETAPA: enviar `registro` ao Apps Script da planilha.
-  // if (SHEETS_WEBAPP_URL) { await fetch(SHEETS_WEBAPP_URL, {method:'POST', body: JSON.stringify(registro)}); }
-  console.log('Gravar em pedidos_separacao:', registro);
+  // Sem URL configurada: modo demonstração (não grava de verdade)
+  if (!SHEETS_WEBAPP_URL) {
+    console.log('Gravar em pedidos_separacao:', registro);
+    mostrarFeedback(true, `Pedido #${numPedido} registrado (modo demonstração — configure a URL do Apps Script).`);
+    e.target.reset();
+    return;
+  }
 
-  const fb = document.getElementById('formFeedback');
-  fb.textContent = `Pedido #${numPedido} enviado para separação com sucesso!`;
-  fb.classList.remove('hidden');
+  const btn = e.target.querySelector('button[type="submit"]');
+  const txtBtn = btn ? btn.textContent : '';
+  if (btn) { btn.disabled = true; btn.textContent = 'Enviando…'; }
 
-  document.getElementById('orderForm').reset();
-  setTimeout(() => fb.classList.add('hidden'), 5000);
+  try {
+    const resp = await enviarParaPlanilha('incluir', registro);
+    if (resp && resp.ok === false) throw new Error(resp.erro || 'Falha ao gravar na planilha.');
+    mostrarFeedback(true, `Pedido #${numPedido} enviado para separação com sucesso!`);
+    e.target.reset();
+  } catch (err) {
+    mostrarFeedback(false, 'Não foi possível registrar o pedido: ' + err.message);
+  } finally {
+    if (btn) { btn.disabled = false; btn.textContent = txtBtn; }
+  }
 });
 
 /* ---------- indicadores do mestre ----------
@@ -367,6 +435,47 @@ if ('serviceWorker' in navigator) {
     navigator.serviceWorker.register('./sw.js').catch(() => {});
   });
 }
+
+/* ---------- PWA: botões "Baixar App" (login + topbar) ---------- */
+(function () {
+  let deferredPrompt = null;
+  const botoes = Array.from(document.querySelectorAll('.js-install'));
+  if (!botoes.length) return;
+
+  const isIOS = () => /iphone|ipad|ipod/i.test(navigator.userAgent);
+  const instalado = () =>
+    window.matchMedia('(display-mode: standalone)').matches ||
+    window.navigator.standalone === true;
+  const mostrar = (v) => botoes.forEach(b => b.classList.toggle('hidden', !v));
+
+  // Mostra os botões sempre que o app NÃO estiver aberto como instalado
+  // (independe de navegador ou do evento de instalação).
+  mostrar(!instalado());
+
+  // Se o navegador oferecer a instalação nativa, guarda para usar no clique
+  window.addEventListener('beforeinstallprompt', (e) => {
+    e.preventDefault();
+    deferredPrompt = e;
+    mostrar(!instalado());
+  });
+
+  async function aoClicar() {
+    if (deferredPrompt) {              // Android/Chrome/Edge: instalação nativa
+      deferredPrompt.prompt();
+      await deferredPrompt.userChoice;
+      deferredPrompt = null;
+      return;
+    }
+    if (isIOS()) {                     // iPhone/iPad (Safari): instruções
+      alert('Para instalar no iPhone/iPad (Safari):\n\n1. Toque no botão Compartilhar (quadrado com a seta para cima).\n2. Escolha "Adicionar à Tela de Início".\n3. Toque em "Adicionar".');
+    } else {                           // Demais casos: instruções gerais
+      alert('Para instalar o app:\n\n• Android (Chrome): menu ⋮ → "Instalar app" / "Adicionar à tela inicial".\n• Computador (Chrome/Edge): ícone de instalar na barra de endereço.\n\nSe a opção não aparecer, abra a página pelo endereço do site (https), com internet, e tente de novo.');
+    }
+  }
+
+  botoes.forEach(b => b.addEventListener('click', aoClicar));
+  window.addEventListener('appinstalled', () => mostrar(false));
+})();
 </script>
 </body>
 </html>

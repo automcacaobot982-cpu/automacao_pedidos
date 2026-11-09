@@ -63,8 +63,10 @@
   .topbar .tb-title{font-family:var(--num);font-weight:600;font-size:15px}
   .topbar .tb-title small{display:block;font-family:var(--sans);font-weight:400;font-size:11px;color:#c3c6ea}
   .topbar .spacer{flex:1}
-  .nav-btn{display:inline-flex;align-items:center;gap:6px;background:rgba(255,255,255,.1);border:1px solid rgba(255,255,255,.22);color:#fff;padding:8px 14px;border-radius:var(--r-sm);text-decoration:none;font-size:13px;font-weight:600}
+  .nav-btn{display:inline-flex;align-items:center;gap:6px;background:rgba(255,255,255,.1);border:1px solid rgba(255,255,255,.22);color:#fff;padding:8px 14px;border-radius:var(--r-sm);text-decoration:none;font-size:13px;font-weight:600;cursor:pointer;font-family:inherit}
   .nav-btn:hover{background:rgba(255,255,255,.2)}
+  .nav-btn-install{background:var(--brand);border-color:var(--brand);color:var(--brand-ink);font-weight:700}
+  .nav-btn-install:hover{background:var(--brand-2);color:#fff}
   #lastUpdate{font-size:12px;color:#c3c6ea}
 
   /* ===== BOARD ===== */
@@ -125,6 +127,23 @@
   }
   .urgente .op-badge{background:#f7d4cd;color:#a02214}
   .empty-col{color:var(--ink-3);font-size:.75rem;text-align:center;padding:14px 0;font-style:italic}
+
+  /* ===== MOBILE (celular) ===== */
+  @media (max-width:768px){
+    /* Topbar compacta */
+    .topbar{gap:8px;padding:0 12px}
+    .topbar .tb-title{flex:0 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+    .topbar .tb-title small{display:none}
+    .nav-btn{padding:8px 11px;font-size:12.5px}
+
+    /* Cada coluna quase preenche a tela; swipe "com encaixe" entre elas */
+    .kanban-board{padding:12px;gap:10px;scroll-snap-type:x mandatory}
+    .kanban-column{width:85vw;min-width:85vw;scroll-snap-align:start}
+  }
+  @media (max-width:480px){
+    #lastUpdate{display:none}
+    .brand-lockup .tb-title{font-size:14px}
+  }
 </style>
 </head>
 <body>
@@ -138,6 +157,7 @@
     <div class="tb-title">Acompanhamento de Pedidos<small>Kanban · Belt Correias</small></div>
   </div>
   <div class="spacer"></div>
+  <button id="btnInstall" class="nav-btn nav-btn-install hidden">⬇️ Baixar App</button>
   <a href="index.html" class="nav-btn">➕ Incluir</a>
   <div id="lastUpdate" style="margin-left:4px">Atualizado agora</div>
 </header>
@@ -152,12 +172,59 @@
    Bases de dados:
    - pedidos_sistema    (A data, B número, C cliente, D vendedor, E cancelado)
    - pedidos_separacao  (A data, B número, C urgente, D operador)
+   - pedidos_retirados  (A número, B data de retirada DD/MM/AAAA HH:MM)
 
    Regras aplicadas:
    - Cancelado = "1" (pedidos_sistema, col. E) -> oculto de todo o processo
    - Urgente   = "1" (pedidos_separacao, col. C) -> cartão vermelho
-   - Retirado  -> visível apenas até 12h após o registro
+   - Retirado  -> quando o número do pedido consta em pedidos_retirados (col. A);
+                  a data de retirada (col. B) define a regra das 12h
+   - Retirado visível apenas até 12h após a data de retirada
    ============================================================ */
+/* IDs das planilhas (as 3 precisam estar compartilhadas como
+   "Qualquer pessoa com o link → Leitor" para o kanban conseguir ler). */
+const SHEETS = {
+  sistema:   { id: '1YOehmwPZTUSG-drIzekLzlozepmmQ5wYvadWrHXAwHo', gid: '0' }, // pedidos_sistema
+  separacao: { id: '13TpiMC8nVo5YCtyo2cAnz0jBxKOv5jk_DOnw6p9KkcA', gid: '0' }, // pedidos_separacao
+  retirados: { id: '1xFwKnV55LG-qfS-igCI1qR3MqoWvOKThXrZ0r69k-8w', gid: '0' }  // pedidos_retirados
+};
+
+/* Lê uma planilha via gviz (JSONP) — evita bloqueio de CORS.
+   Resolve com uma lista de linhas; cada célula vira { v, f }
+   (v = valor bruto, f = valor formatado/exibido). */
+function lerPlanilha(sheetId, gid) {
+  return new Promise((resolve, reject) => {
+    const cb = 'gviz_' + Date.now() + '_' + Math.floor(Math.random() * 1e5);
+    const url = 'https://docs.google.com/spreadsheets/d/' + sheetId + '/gviz/tq'
+              + '?gid=' + gid + '&headers=0&tqx=out:json;responseHandler:' + cb
+              + '&_=' + Date.now();
+    const s = document.createElement('script');
+    let pronto = false;
+    const limpar = () => { try { delete window[cb]; } catch (e) {} s.remove(); };
+    window[cb] = (resp) => { pronto = true; limpar(); try { resolve(gvizLinhas(resp)); } catch (err) { reject(err); } };
+    s.onerror = () => { if (!pronto) { limpar(); reject(new Error('Falha ao ler planilha ' + sheetId)); } };
+    setTimeout(() => { if (!pronto) { limpar(); reject(new Error('Tempo esgotado na planilha ' + sheetId)); } }, 15000);
+    s.src = url;
+    document.head.appendChild(s);
+  });
+}
+
+function gvizLinhas(resp) {
+  const rows = (resp && resp.table && resp.table.rows) || [];
+  return rows.map(r => (r.c || []).map(c => ({
+    v: (c && c.v != null) ? c.v : '',
+    f: (c && c.f != null) ? c.f : ((c && c.v != null) ? String(c.v) : '')
+  })));
+}
+
+/* Célula -> número do pedido (só dígitos, para casar entre as bases) */
+function numCel(cel) {
+  if (!cel) return '';
+  const bruto = (cel.v !== '' && cel.v != null) ? cel.v : cel.f;
+  return String(bruto).replace(/[^\d]/g, '');
+}
+/* Célula -> texto exibido */
+function txtCel(cel) { return cel ? String(cel.f || cel.v || '').trim() : ''; }
 const COLUNAS = [
   { id:'pendente',     titulo:'Pendente' },
   { id:'compras',      titulo:'Em Compras' },
@@ -204,62 +271,97 @@ function montarColunas() {
 }
 
 /* ---------- cartão ---------- */
+function esc(s) {
+  return String(s).replace(/[&<>"]/g, c => ({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;' }[c]));
+}
 function renderCard(pedido) {
   const card = document.createElement('article');
   const urgente = pedido.urgente === 1 || pedido.urgente === '1';
   card.className = 'card' + (urgente ? ' urgente' : '');
   card.innerHTML = `
-    <div class="order-number">${pedido.numero}</div>
-    <div class="customer-name">${pedido.cliente || '[0000] CLIENTE NÃO IDENTIFICADO'}</div>
-    <div class="operator-name">Op: ${(pedido.operador || 'DESCONHECIDO').toUpperCase()}</div>
-    ${pedido.op ? `<div class="op-badge">OP: ${pedido.op}</div>` : ''}`;
+    <div class="order-number">${esc(pedido.numero)}</div>
+    <div class="customer-name">${esc(pedido.cliente || '[0000] CLIENTE NÃO IDENTIFICADO')}</div>
+    <div class="operator-name">Op: ${esc((pedido.operador || 'DESCONHECIDO').toUpperCase())}</div>`;
   return card;
 }
 
-/* ---------- carregamento ---------- */
-function carregarKanban() {
-  montarColunas();
-
-  /* DADOS DE EXEMPLO — na próxima etapa virão das planilhas publicadas.
-     'cancelado' e 'dataRetirada' demonstram as regras de ocultação. */
-  const pedidos = [
-    { numero:'94968', cliente:'[102] METALURGICA SILVA LTDA',  operador:'JOÃO MARCELO DA CUNHA AGUIAR',   status:'pendente',    urgente:0, op:'',      cancelado:0 },
-    { numero:'94971', cliente:'[150] FERRAGENS UNIAO ME',       operador:'IVANIR COSTA DA CONCEICAO',       status:'compras',     urgente:0, op:'',      cancelado:0 },
-    { numero:'94969', cliente:'[205] IND BAZAR BRASIL S/A',     operador:'CARLOS EDUARDO LAMBERTI IEGGLE',  status:'separacao',   urgente:1, op:'37757', cancelado:0 },
-    { numero:'94972', cliente:'[311] TRANSPORTES RAPIDO LTDA',  operador:'CHRISTIAN SILVA HEBERLE',         status:'lib-prod',    urgente:0, op:'37760', cancelado:0 },
-    { numero:'94973', cliente:'[077] MINERACAO VALE VERDE',     operador:'SAMUEL DOS SANTOS FERREIRA',      status:'producao',    urgente:1, op:'37761', cancelado:0 },
-    { numero:'94974', cliente:'[412] AGRO MAQUINAS OESTE',      operador:'VALDISNEI DE MAMAN',              status:'conferencia', urgente:0, op:'',      cancelado:0 },
-    { numero:'94966', cliente:'[205] IND BAZAR BRASIL S/A',     operador:'CARLOS EDUARDO LAMBERTI IEGGLE',  status:'aprovado',    urgente:0, op:'37750', cancelado:0 },
-    { numero:'94960', cliente:'[102] METALURGICA SILVA LTDA',   operador:'JOÃO MARCELO DA CUNHA AGUIAR',    status:'faturado',    urgente:0, op:'',      cancelado:0 },
-    { numero:'94970', cliente:'[301] COMERCIAL PRIMAVERA LTDA', operador:'SAMUEL DOS SANTOS FERREIRA',      status:'retirado',    urgente:0, op:'',      cancelado:0, dataRetirada: proximoDe(2) },  // < 12h: visível
-    { numero:'94965', cliente:'[088] AUTO PECAS SUL LTDA',      operador:'VALDISNEI DE MAMAN',              status:'retirado',    urgente:0, op:'',      cancelado:0, dataRetirada: proximoDe(20) }, // > 12h: oculto
-    { numero:'94958', cliente:'[150] FERRAGENS UNIAO ME',       operador:'IVANIR COSTA DA CONCEICAO',       status:'producao',    urgente:0, op:'37740', cancelado:1 }  // cancelado: oculto
-  ];
-
-  pedidos.forEach(ped => {
-    if (ped.cancelado === 1 || ped.cancelado === '1') return;                 // regra: cancelado some
-    if (ped.status === 'retirado' && retiradoVencido(ped.dataRetirada)) return; // regra: 12h
-    const container = document.getElementById('col-' + ped.status);
-    if (container) container.appendChild(renderCard(ped));
-  });
-
-  // contadores + placeholder de coluna vazia
+/* ---------- contadores + placeholder ---------- */
+function atualizarContadores() {
   COLUNAS.forEach(col => {
     const container = document.getElementById('col-' + col.id);
     const n = container.childElementCount;
     document.getElementById('cnt-' + col.id).textContent = n;
     if (n === 0) container.innerHTML = '<div class="empty-col">Sem pedidos</div>';
   });
-
-  document.getElementById('lastUpdate').textContent =
-    'Atualizado às ' + new Date().toLocaleTimeString('pt-BR');
 }
 
-// helper só para o exemplo: retorna um horário DD/MM/AAAA HH:MM de X horas atrás
-function proximoDe(horasAtras) {
-  const d = new Date(Date.now() - horasAtras * 36e5);
-  const p = n => String(n).padStart(2, '0');
-  return `${p(d.getDate())}/${p(d.getMonth() + 1)}/${d.getFullYear()} ${p(d.getHours())}:${p(d.getMinutes())}:00`;
+/* ---------- carregamento das bases reais ----------
+   Situações definidas no prompt (as demais colunas ficam vazias
+   até terem base de dados própria):
+   - Pendente     -> pedido existe em pedidos_sistema
+   - Em Separação -> número também consta em pedidos_separacao (col. B)
+   - Retirado     -> número consta em pedidos_retirados (col. A)
+   Regras: cancelado (sistema col. E = "1") some; urgente
+   (separacao col. C = "1") fica vermelho; retirado some após 12h. */
+async function carregarKanban() {
+  montarColunas();
+  try {
+    const [sistema, separacao, retirados] = await Promise.all([
+      lerPlanilha(SHEETS.sistema.id,   SHEETS.sistema.gid),
+      lerPlanilha(SHEETS.separacao.id, SHEETS.separacao.gid),
+      lerPlanilha(SHEETS.retirados.id, SHEETS.retirados.gid)
+    ]);
+
+    // Índice de pedidos_separacao por número -> { urgente, operador }
+    const mapSep = {};
+    separacao.forEach(row => {
+      const num = numCel(row[1]);                 // B = número
+      if (!num) return;
+      mapSep[num] = { urgente: txtCel(row[2]) === '1', operador: txtCel(row[3]) }; // C, D
+    });
+
+    // Índice de pedidos_retirados por número -> data de retirada
+    const mapRet = {};
+    retirados.forEach(row => {
+      const num = numCel(row[0]);                 // A = número
+      if (!num) return;
+      mapRet[num] = txtCel(row[1]);               // B = data de retirada
+    });
+
+    // Cartões a partir de pedidos_sistema (base mestre)
+    sistema.forEach(row => {
+      const num = numCel(row[1]);                 // B = número
+      if (!num) return;                           // pula cabeçalho/linhas vazias
+      if (txtCel(row[4]) === '1') return;         // E = cancelado -> some
+
+      const cliente  = txtCel(row[2]);            // C = [Código] RAZÃO SOCIAL
+      const vendedor = txtCel(row[3]);            // D = vendedor (quem incluiu)
+
+      let status = 'pendente', urgente = 0, operador = vendedor, dataRetirada = '';
+      if (mapRet[num]) {                          // está em pedidos_retirados
+        status = 'retirado';
+        dataRetirada = mapRet[num];
+      } else if (mapSep[num]) {                   // está em pedidos_separacao
+        status = 'separacao';
+        urgente = mapSep[num].urgente ? 1 : 0;
+        if (mapSep[num].operador) operador = mapSep[num].operador;
+      }
+
+      // Regra das 12h: retirado antigo não aparece
+      if (status === 'retirado' && retiradoVencido(dataRetirada)) return;
+
+      const container = document.getElementById('col-' + status);
+      if (container) container.appendChild(renderCard({ numero: num, cliente, operador, urgente }));
+    });
+
+    atualizarContadores();
+    document.getElementById('lastUpdate').textContent =
+      'Atualizado às ' + new Date().toLocaleTimeString('pt-BR');
+  } catch (err) {
+    atualizarContadores();
+    document.getElementById('lastUpdate').textContent = 'Erro ao carregar as planilhas';
+    console.error(err);
+  }
 }
 
 carregarKanban();
@@ -271,6 +373,44 @@ if ('serviceWorker' in navigator) {
     navigator.serviceWorker.register('./sw.js').catch(() => {});
   });
 }
+
+/* ---------- PWA: botão "Baixar App" ---------- */
+(function () {
+  let deferredPrompt = null;
+  const btn = document.getElementById('btnInstall');
+  if (!btn) return;
+
+  const isIOS = () => /iphone|ipad|ipod/i.test(navigator.userAgent);
+  const instalado = () =>
+    window.matchMedia('(display-mode: standalone)').matches ||
+    window.navigator.standalone === true;
+  const mostrar = (v) => btn.classList.toggle('hidden', !v);
+
+  // Mostra o botão sempre que o app NÃO estiver aberto como instalado
+  mostrar(!instalado());
+
+  window.addEventListener('beforeinstallprompt', (e) => {
+    e.preventDefault();
+    deferredPrompt = e;
+    mostrar(!instalado());
+  });
+
+  btn.addEventListener('click', async () => {
+    if (deferredPrompt) {              // Android/Chrome/Edge: instalação nativa
+      deferredPrompt.prompt();
+      await deferredPrompt.userChoice;
+      deferredPrompt = null;
+      return;
+    }
+    if (isIOS()) {                     // iPhone/iPad (Safari): instruções
+      alert('Para instalar no iPhone/iPad (Safari):\n\n1. Toque no botão Compartilhar (quadrado com a seta para cima).\n2. Escolha "Adicionar à Tela de Início".\n3. Toque em "Adicionar".');
+    } else {                           // Demais casos: instruções gerais
+      alert('Para instalar o app:\n\n• Android (Chrome): menu ⋮ → "Instalar app" / "Adicionar à tela inicial".\n• Computador (Chrome/Edge): ícone de instalar na barra de endereço.\n\nSe a opção não aparecer, abra a página pelo endereço do site (https), com internet, e tente de novo.');
+    }
+  });
+
+  window.addEventListener('appinstalled', () => mostrar(false));
+})();
 </script>
 </body>
 </html>
