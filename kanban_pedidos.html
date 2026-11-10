@@ -296,72 +296,88 @@ function atualizarContadores() {
 }
 
 /* ---------- carregamento das bases reais ----------
-   Situações definidas no prompt (as demais colunas ficam vazias
-   até terem base de dados própria):
-   - Pendente     -> pedido existe em pedidos_sistema
-   - Em Separação -> número também consta em pedidos_separacao (col. B)
-   - Retirado     -> número consta em pedidos_retirados (col. A)
-   Regras: cancelado (sistema col. E = "1") some; urgente
-   (separacao col. C = "1") fica vermelho; retirado some após 12h. */
+   Cada pedido é montado pela UNIÃO das três bases (casadas pelo número):
+   - pedidos_sistema   -> cliente, vendedor, cancelado
+   - pedidos_separacao -> marca "Em Separação", urgente, operador
+   - pedidos_retirados -> marca "Retirado" + data de retirada
+   Situação (da mais avançada p/ a menos): Retirado > Em Separação > Pendente.
+   Assim, um pedido que está em pedidos_separacao aparece em "Em Separação"
+   mesmo que ainda não exista em pedidos_sistema (só fica sem o nome do cliente).
+   Regras: cancelado (sistema col. E = "1") some; urgente (separacao col. C = "1")
+   fica vermelho; retirado some após 12h. */
 async function carregarKanban() {
   montarColunas();
-  try {
-    const [sistema, separacao, retirados] = await Promise.all([
-      lerPlanilha(SHEETS.sistema.id,   SHEETS.sistema.gid),
-      lerPlanilha(SHEETS.separacao.id, SHEETS.separacao.gid),
-      lerPlanilha(SHEETS.retirados.id, SHEETS.retirados.gid)
-    ]);
 
-    // Índice de pedidos_separacao por número -> { urgente, operador }
-    const mapSep = {};
-    separacao.forEach(row => {
-      const num = numCel(row[1]);                 // B = número
-      if (!num) return;
-      mapSep[num] = { urgente: txtCel(row[2]) === '1', operador: txtCel(row[3]) }; // C, D
-    });
+  // Lê as 3 bases de forma tolerante: se uma falhar (ex.: não compartilhada),
+  // as demais continuam funcionando — não quebra o kanban inteiro.
+  const res = await Promise.allSettled([
+    lerPlanilha(SHEETS.sistema.id,   SHEETS.sistema.gid),
+    lerPlanilha(SHEETS.separacao.id, SHEETS.separacao.gid),
+    lerPlanilha(SHEETS.retirados.id, SHEETS.retirados.gid)
+  ]);
+  const sistema   = res[0].status === 'fulfilled' ? res[0].value : [];
+  const separacao = res[1].status === 'fulfilled' ? res[1].value : [];
+  const retirados = res[2].status === 'fulfilled' ? res[2].value : [];
 
-    // Índice de pedidos_retirados por número -> data de retirada
-    const mapRet = {};
-    retirados.forEach(row => {
-      const num = numCel(row[0]);                 // A = número
-      if (!num) return;
-      mapRet[num] = txtCel(row[1]);               // B = data de retirada
-    });
+  const falhas = [];
+  if (res[0].status !== 'fulfilled') falhas.push('pedidos_sistema');
+  if (res[1].status !== 'fulfilled') falhas.push('pedidos_separacao');
+  if (res[2].status !== 'fulfilled') falhas.push('pedidos_retirados');
 
-    // Cartões a partir de pedidos_sistema (base mestre)
-    sistema.forEach(row => {
-      const num = numCel(row[1]);                 // B = número
-      if (!num) return;                           // pula cabeçalho/linhas vazias
-      if (txtCel(row[4]) === '1') return;         // E = cancelado -> some
+  // Une as bases pelo número do pedido
+  const pedidos = {};
+  const obter = num => (pedidos[num] || (pedidos[num] = {
+    numero: num, cliente: '', operador: '', urgente: 0,
+    cancelado: false, emSeparacao: false, retirado: false, dataRetirada: ''
+  }));
 
-      const cliente  = txtCel(row[2]);            // C = [Código] RAZÃO SOCIAL
-      const vendedor = txtCel(row[3]);            // D = vendedor (quem incluiu)
+  sistema.forEach(row => {
+    const num = numCel(row[1]); if (!num) return;                 // B = número
+    const p = obter(num);
+    const cli = txtCel(row[2]); if (cli) p.cliente = cli;         // C = cliente
+    const vend = txtCel(row[3]); if (vend && !p.operador) p.operador = vend; // D = vendedor
+    if (txtCel(row[4]) === '1') p.cancelado = true;              // E = cancelado
+  });
 
-      let status = 'pendente', urgente = 0, operador = vendedor, dataRetirada = '';
-      if (mapRet[num]) {                          // está em pedidos_retirados
-        status = 'retirado';
-        dataRetirada = mapRet[num];
-      } else if (mapSep[num]) {                   // está em pedidos_separacao
-        status = 'separacao';
-        urgente = mapSep[num].urgente ? 1 : 0;
-        if (mapSep[num].operador) operador = mapSep[num].operador;
-      }
+  separacao.forEach(row => {
+    const num = numCel(row[1]); if (!num) return;                 // B = número
+    const p = obter(num);
+    p.emSeparacao = true;
+    if (txtCel(row[2]) === '1') p.urgente = 1;                    // C = urgente
+    const op = txtCel(row[3]); if (op) p.operador = op;           // D = operador (prioritário)
+  });
 
-      // Regra das 12h: retirado antigo não aparece
-      if (status === 'retirado' && retiradoVencido(dataRetirada)) return;
+  retirados.forEach(row => {
+    const num = numCel(row[0]); if (!num) return;                 // A = número
+    const p = obter(num);
+    p.retirado = true;
+    p.dataRetirada = txtCel(row[1]);                              // B = data de retirada
+  });
 
-      const container = document.getElementById('col-' + status);
-      if (container) container.appendChild(renderCard({ numero: num, cliente, operador, urgente }));
-    });
+  // Distribui nas colunas pela situação mais avançada
+  Object.keys(pedidos).forEach(num => {
+    const p = pedidos[num];
+    if (p.cancelado) return;                                      // cancelado some
 
-    atualizarContadores();
-    document.getElementById('lastUpdate').textContent =
-      'Atualizado às ' + new Date().toLocaleTimeString('pt-BR');
-  } catch (err) {
-    atualizarContadores();
-    document.getElementById('lastUpdate').textContent = 'Erro ao carregar as planilhas';
-    console.error(err);
-  }
+    let status = 'pendente';
+    if (p.retirado) {
+      if (retiradoVencido(p.dataRetirada)) return;               // retirado há +12h some
+      status = 'retirado';
+    } else if (p.emSeparacao) {
+      status = 'separacao';
+    }
+
+    const container = document.getElementById('col-' + status);
+    if (container) container.appendChild(renderCard({
+      numero: p.numero, cliente: p.cliente, operador: p.operador, urgente: p.urgente
+    }));
+  });
+
+  atualizarContadores();
+  const hora = new Date().toLocaleTimeString('pt-BR');
+  document.getElementById('lastUpdate').textContent = falhas.length
+    ? 'Atualizado às ' + hora + ' — sem acesso a: ' + falhas.join(', ')
+    : 'Atualizado às ' + hora;
 }
 
 carregarKanban();
