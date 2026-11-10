@@ -181,11 +181,13 @@
                   a data de retirada (col. B) define a regra das 12h
    - Retirado visível apenas até 12h após a data de retirada
    ============================================================ */
-/* IDs das planilhas (as 3 precisam estar compartilhadas como
+/* IDs das planilhas (todas precisam estar compartilhadas como
    "Qualquer pessoa com o link → Leitor" para o kanban conseguir ler). */
 const SHEETS = {
   sistema:   { id: '1YOehmwPZTUSG-drIzekLzlozepmmQ5wYvadWrHXAwHo', gid: '0' }, // pedidos_sistema
   separacao: { id: '13TpiMC8nVo5YCtyo2cAnz0jBxKOv5jk_DOnw6p9KkcA', gid: '0' }, // pedidos_separacao
+  aprovados: { id: '1s_V8-wqx_9S4PQgX_r0A1yMVlUsSI82MBuVGOE8bIZ0', gid: '0' }, // pedidos_aprovados
+  faturados: { id: '19YGc_k8-VCbuSb9hhM3SyoyLKT2HM_zlJmwhHeLUx2w', gid: '0' }, // pedidos_faturados
   retirados: { id: '1xFwKnV55LG-qfS-igCI1qR3MqoWvOKThXrZ0r69k-8w', gid: '0' }  // pedidos_retirados
 };
 
@@ -296,39 +298,42 @@ function atualizarContadores() {
 }
 
 /* ---------- carregamento das bases reais ----------
-   Cada pedido é montado pela UNIÃO das três bases (casadas pelo número):
+   Cada pedido é montado pela UNIÃO das bases (casadas pelo número):
    - pedidos_sistema   -> cliente, vendedor, cancelado
    - pedidos_separacao -> marca "Em Separação", urgente, operador
+   - pedidos_aprovados -> marca "Aprovado"        (col. A = número)
+   - pedidos_faturados -> marca "Faturado"        (col. E = número(s))
    - pedidos_retirados -> marca "Retirado" + data de retirada
-   Situação (da mais avançada p/ a menos): Retirado > Em Separação > Pendente.
-   Assim, um pedido que está em pedidos_separacao aparece em "Em Separação"
-   mesmo que ainda não exista em pedidos_sistema (só fica sem o nome do cliente).
-   Regras: cancelado (sistema col. E = "1") some; urgente (separacao col. C = "1")
-   fica vermelho; retirado some após 12h. */
+   Situação (da mais avançada p/ a menos):
+     Retirado > Faturado > Aprovado > Em Separação > Pendente.
+   (Em Compras, Liberado p/ Produção, Em Produção e Em Conferência ainda
+    não têm base definida.) Regras: cancelado (sistema col. E = "1") some;
+   urgente (separacao col. C = "1") fica vermelho; retirado some após 12h. */
 async function carregarKanban() {
   montarColunas();
 
-  // Lê as 3 bases de forma tolerante: se uma falhar (ex.: não compartilhada),
+  // Lê as bases de forma tolerante: se uma falhar (ex.: não compartilhada),
   // as demais continuam funcionando — não quebra o kanban inteiro.
   const res = await Promise.allSettled([
     lerPlanilha(SHEETS.sistema.id,   SHEETS.sistema.gid),
     lerPlanilha(SHEETS.separacao.id, SHEETS.separacao.gid),
+    lerPlanilha(SHEETS.aprovados.id, SHEETS.aprovados.gid),
+    lerPlanilha(SHEETS.faturados.id, SHEETS.faturados.gid),
     lerPlanilha(SHEETS.retirados.id, SHEETS.retirados.gid)
   ]);
-  const sistema   = res[0].status === 'fulfilled' ? res[0].value : [];
-  const separacao = res[1].status === 'fulfilled' ? res[1].value : [];
-  const retirados = res[2].status === 'fulfilled' ? res[2].value : [];
+  const val = i => (res[i].status === 'fulfilled' ? res[i].value : []);
+  const sistema = val(0), separacao = val(1), aprovados = val(2),
+        faturados = val(3), retirados = val(4);
 
-  const falhas = [];
-  if (res[0].status !== 'fulfilled') falhas.push('pedidos_sistema');
-  if (res[1].status !== 'fulfilled') falhas.push('pedidos_separacao');
-  if (res[2].status !== 'fulfilled') falhas.push('pedidos_retirados');
+  const nomes = ['pedidos_sistema', 'pedidos_separacao', 'pedidos_aprovados',
+                 'pedidos_faturados', 'pedidos_retirados'];
+  const falhas = nomes.filter((_, i) => res[i].status !== 'fulfilled');
 
   // Une as bases pelo número do pedido
   const pedidos = {};
   const obter = num => (pedidos[num] || (pedidos[num] = {
-    numero: num, cliente: '', operador: '', urgente: 0,
-    cancelado: false, emSeparacao: false, retirado: false, dataRetirada: ''
+    numero: num, cliente: '', operador: '', urgente: 0, cancelado: false,
+    emSeparacao: false, aprovado: false, faturado: false, retirado: false, dataRetirada: ''
   }));
 
   sistema.forEach(row => {
@@ -347,6 +352,20 @@ async function carregarKanban() {
     const op = txtCel(row[3]); if (op) p.operador = op;           // D = operador (prioritário)
   });
 
+  aprovados.forEach(row => {
+    const num = numCel(row[0]); if (!num) return;                 // A = número
+    obter(num).aprovado = true;
+  });
+
+  faturados.forEach(row => {
+    // Coluna E pode ter mais de um pedido por nota (ex.: "94308, 94309")
+    const campoE = txtCel(row[4]); if (!campoE) return;           // E = número(s)
+    campoE.split(',').forEach(parte => {
+      const num = String(parte).replace(/[^\d]/g, '');
+      if (num) obter(num).faturado = true;
+    });
+  });
+
   retirados.forEach(row => {
     const num = numCel(row[0]); if (!num) return;                 // A = número
     const p = obter(num);
@@ -363,6 +382,10 @@ async function carregarKanban() {
     if (p.retirado) {
       if (retiradoVencido(p.dataRetirada)) return;               // retirado há +12h some
       status = 'retirado';
+    } else if (p.faturado) {
+      status = 'faturado';
+    } else if (p.aprovado) {
+      status = 'aprovado';
     } else if (p.emSeparacao) {
       status = 'separacao';
     }
