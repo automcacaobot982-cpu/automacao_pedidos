@@ -281,7 +281,7 @@ function renderCard(pedido) {
   card.innerHTML = `
     <div class="order-number">${esc(pedido.numero)}</div>
     <div class="customer-name">${esc(pedido.cliente || '[0000] CLIENTE NÃO IDENTIFICADO')}</div>
-    <div class="operator-name">Op: ${esc((pedido.operador || 'DESCONHECIDO').toUpperCase())}</div>`;
+    <div class="operator-name">${esc((pedido.operador || 'DESCONHECIDO').toUpperCase())}</div>`;
   return card;
 }
 
