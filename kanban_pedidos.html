@@ -17,6 +17,7 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700&family=Space+Grotesk:wght@500;600;700&display=swap" rel="stylesheet">
+<script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
 <style>
   :root{
     --bg:#f0f5fa;
@@ -93,6 +94,13 @@
     background:var(--brand-tint);color:var(--brand-2);
     padding:2px 9px;border-radius:10px;font-size:11.5px;font-weight:700;font-family:var(--num);
   }
+  .hdr-right{display:flex;align-items:center;gap:6px}
+  .btn-dl{
+    width:22px;height:22px;padding:0;border:1px solid var(--line);background:#fff;color:var(--brand-2);
+    border-radius:6px;cursor:pointer;font-size:12px;line-height:1;font-family:inherit;
+    display:inline-flex;align-items:center;justify-content:center;
+  }
+  .btn-dl:hover{background:var(--brand-tint);border-color:var(--brand)}
   .cards-container{
     padding:10px;display:flex;flex-direction:column;gap:10px;
     overflow-y:auto;min-height:80px;
@@ -239,6 +247,9 @@ const COLUNAS = [
   { id:'retirado',     titulo:'Retirado' }
 ];
 
+// Guarda a lista de pedidos de cada coluna (para o download em Excel)
+let dadosColunas = {};
+
 /* ---------- utilitários de data ---------- */
 function parseDate(dateStr) {
   if (!dateStr) return null;
@@ -265,7 +276,10 @@ function montarColunas() {
     sec.innerHTML = `
       <div class="column-header">
         <span><span class="dot"></span>${col.titulo}</span>
-        <span class="card-count" id="cnt-${col.id}">0</span>
+        <span class="hdr-right">
+          <span class="card-count" id="cnt-${col.id}">0</span>
+          <button class="btn-dl" data-col="${col.id}" title="Baixar lista em Excel">⬇</button>
+        </span>
       </div>
       <div class="cards-container" id="col-${col.id}"></div>`;
     board.appendChild(sec);
@@ -311,6 +325,7 @@ function atualizarContadores() {
    urgente (separacao col. C = "1") fica vermelho; retirado some após 12h. */
 async function carregarKanban() {
   montarColunas();
+  dadosColunas = {};   // zera os dados de exportação a cada atualização
 
   // Lê as bases de forma tolerante: se uma falhar (ex.: não compartilhada),
   // as demais continuam funcionando — não quebra o kanban inteiro.
@@ -391,9 +406,17 @@ async function carregarKanban() {
     }
 
     const container = document.getElementById('col-' + status);
-    if (container) container.appendChild(renderCard({
-      numero: p.numero, cliente: p.cliente, operador: p.operador, urgente: p.urgente
-    }));
+    if (container) {
+      container.appendChild(renderCard({
+        numero: p.numero, cliente: p.cliente, operador: p.operador, urgente: p.urgente
+      }));
+      (dadosColunas[status] = dadosColunas[status] || []).push({
+        numero: p.numero,
+        cliente: p.cliente || '',
+        operador: (p.operador || '').toUpperCase(),
+        urgente: p.urgente ? 'SIM' : ''
+      });
+    }
   });
 
   atualizarContadores();
@@ -402,6 +425,44 @@ async function carregarKanban() {
     ? 'Atualizado às ' + hora + ' — sem acesso a: ' + falhas.join(', ')
     : 'Atualizado às ' + hora;
 }
+
+/* ---------- download da coluna em Excel ---------- */
+function baixarColuna(colId) {
+  const col = COLUNAS.find(c => c.id === colId);
+  const titulo = col ? col.titulo : colId;
+  const lista = dadosColunas[colId] || [];
+  if (!lista.length) {
+    alert('Não há pedidos na coluna "' + titulo + '".');
+    return;
+  }
+
+  const cabecalho = ['Número do Pedido', 'Cliente', 'Operador', 'Urgente'];
+  const aoa = [cabecalho].concat(lista.map(p => [p.numero, p.cliente, p.operador, p.urgente]));
+  const data = new Date().toISOString().slice(0, 10);
+
+  if (window.XLSX) {
+    const ws = XLSX.utils.aoa_to_sheet(aoa);
+    ws['!cols'] = [{ wch: 16 }, { wch: 40 }, { wch: 28 }, { wch: 9 }];
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, titulo.slice(0, 31));
+    XLSX.writeFile(wb, 'pedidos_' + colId + '_' + data + '.xlsx');
+  } else {
+    // Reserva: se a biblioteca não carregou, baixa em CSV (abre no Excel)
+    const csv = '﻿' + aoa.map(l =>
+      l.map(c => '"' + String(c).replace(/"/g, '""') + '"').join(';')).join('\r\n');
+    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = 'pedidos_' + colId + '_' + data + '.csv';
+    document.body.appendChild(a); a.click(); a.remove();
+  }
+}
+
+// Clique nos botões de download (delegado no quadro, sobrevive às atualizações)
+document.getElementById('board').addEventListener('click', e => {
+  const btn = e.target.closest('.btn-dl');
+  if (btn) baixarColuna(btn.getAttribute('data-col'));
+});
 
 carregarKanban();
 setInterval(carregarKanban, 30000); // recarrega a cada 30s
