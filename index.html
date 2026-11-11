@@ -138,6 +138,8 @@
     padding:14px 16px;border-radius:var(--r-sm);margin-bottom:20px;user-select:none;
   }
   .chk-urgente input{width:20px;height:20px;accent-color:var(--red);cursor:pointer}
+  .chk-urgente.chk-imprimir{background:var(--brand-tint);color:var(--brand-ink);border-color:#bfe3f5}
+  .chk-urgente.chk-imprimir input{accent-color:var(--brand)}
   .btn-enviar{background:var(--brand);color:var(--brand-ink);font-weight:700;width:100%;margin-top:6px;padding:14px;font-size:16px}
   .btn-enviar:hover{background:var(--brand-2);color:#fff}
   .alert{padding:13px 15px;border-radius:var(--r-sm);margin-top:16px;font-size:14px;font-weight:500}
@@ -259,7 +261,7 @@
           <!-- Checkbox de urgente ACIMA do campo do número, conforme o prompt -->
           <label class="chk-urgente">
             <input type="checkbox" id="chkUrgente">
-            <span>Pedido Urgente!</span>
+            <span id="chkTexto">Pedido Urgente!</span>
           </label>
 
           <div class="field">
@@ -338,6 +340,11 @@ document.getElementById('loginForm').addEventListener('submit', (e) => {
   document.getElementById('login').classList.add('hidden');
   document.getElementById('app').classList.remove('hidden');
   document.getElementById('displayUser').textContent = `Operador: ${u.nome}`;
+
+  // VALDISNEI: o checkbox vira "Imprimir" (marcado = imprime; desmarcado = aprova no Plune)
+  const ehValdisnei = u.nome === 'VALDISNEI DE MAMAN';
+  document.getElementById('chkTexto').textContent = ehValdisnei ? 'Imprimir' : 'Pedido Urgente!';
+  document.querySelector('.chk-urgente').classList.toggle('chk-imprimir', ehValdisnei);
 
   if (u.tipo === 'MESTRE') {
     document.getElementById('panel-mestre').classList.remove('hidden');
