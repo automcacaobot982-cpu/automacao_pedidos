@@ -69,6 +69,13 @@
   .nav-btn-install{background:var(--brand);border-color:var(--brand);color:var(--brand-ink);font-weight:700}
   .nav-btn-install:hover{background:var(--brand-2);color:#fff}
   #lastUpdate{font-size:12px;color:#c3c6ea}
+  .busca{
+    width:260px;max-width:42vw;padding:8px 12px;border-radius:8px;
+    border:1px solid rgba(255,255,255,.25);background:rgba(255,255,255,.12);
+    color:#fff;font-size:13px;font-family:inherit;
+  }
+  .busca::placeholder{color:#c3c6ea}
+  .busca:focus{outline:none;background:#fff;color:var(--ink);border-color:var(--brand);box-shadow:0 0 0 3px rgba(0,173,238,.25)}
 
   /* ===== BOARD ===== */
   .kanban-board{
@@ -129,6 +136,7 @@
     font-size:.72rem;color:var(--ink-2);text-transform:uppercase;letter-spacing:.3px;
     border-top:1px dashed var(--line-2);padding-top:6px;
   }
+  .retirada-info{font-size:.7rem;color:var(--brand-2);font-weight:700;margin-top:5px;font-family:var(--num)}
   .op-badge{
     display:inline-block;font-size:.68rem;background:var(--brand-tint);color:var(--brand-2);
     padding:2px 7px;border-radius:4px;margin-top:6px;font-weight:700;font-family:var(--num);letter-spacing:.5px;
@@ -142,6 +150,8 @@
     .topbar{gap:8px;padding:0 12px}
     .topbar .tb-title{flex:0 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
     .topbar .tb-title small{display:none}
+    .topbar .spacer{display:none}
+    .busca{flex:1;min-width:0;width:auto;max-width:none}
     .nav-btn{padding:8px 11px;font-size:12.5px}
 
     /* Cada coluna quase preenche a tela; swipe "com encaixe" entre elas */
@@ -164,6 +174,8 @@
     </svg>
     <div class="tb-title">Acompanhamento de Pedidos<small>Kanban · Belt Correias</small></div>
   </div>
+  <div class="spacer"></div>
+  <input id="busca" class="busca" type="search" placeholder="Pesquisar nº do pedido..." inputmode="numeric" autocomplete="off">
   <div class="spacer"></div>
   <button id="btnInstall" class="nav-btn nav-btn-install hidden">⬇️ Baixar App</button>
   <a href="index.html" class="nav-btn">➕ Incluir</a>
@@ -290,6 +302,12 @@ function montarColunas() {
 function esc(s) {
   return String(s).replace(/[&<>"]/g, c => ({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;' }[c]));
 }
+function fmtDataHora(s) {
+  s = String(s || '').trim();
+  const m = s.match(/^(\d{2}\/\d{2}\/\d{4}\s+\d{2}:\d{2})/);
+  return m ? m[1] : s;
+}
+
 function renderCard(pedido) {
   const card = document.createElement('article');
   const urgente = pedido.urgente === 1 || pedido.urgente === '1';
@@ -297,7 +315,8 @@ function renderCard(pedido) {
   card.innerHTML = `
     <div class="order-number">${esc(pedido.numero)}</div>
     <div class="customer-name">${esc(pedido.cliente || '[0000] CLIENTE NÃO IDENTIFICADO')}</div>
-    <div class="operator-name">${esc((pedido.operador || 'DESCONHECIDO').toUpperCase())}</div>`;
+    <div class="operator-name">${esc((pedido.operador || 'DESCONHECIDO').toUpperCase())}</div>
+    ${pedido.dataRetirada ? `<div class="retirada-info">Retirado em ${esc(pedido.dataRetirada)}</div>` : ''}`;
   return card;
 }
 
@@ -408,7 +427,8 @@ async function carregarKanban() {
     const container = document.getElementById('col-' + status);
     if (container) {
       container.appendChild(renderCard({
-        numero: p.numero, cliente: p.cliente, operador: p.operador, urgente: p.urgente
+        numero: p.numero, cliente: p.cliente, operador: p.operador, urgente: p.urgente,
+        dataRetirada: status === 'retirado' ? fmtDataHora(p.dataRetirada) : ''
       }));
       (dadosColunas[status] = dadosColunas[status] || []).push({
         numero: p.numero,
@@ -420,11 +440,23 @@ async function carregarKanban() {
   });
 
   atualizarContadores();
+  aplicarFiltro();   // reaplica a pesquisa após cada atualização
   const hora = new Date().toLocaleTimeString('pt-BR');
   document.getElementById('lastUpdate').textContent = falhas.length
     ? 'Atualizado às ' + hora + ' — sem acesso a: ' + falhas.join(', ')
     : 'Atualizado às ' + hora;
 }
+
+/* ---------- pesquisa por número do pedido ---------- */
+function aplicarFiltro() {
+  const termo = (document.getElementById('busca').value || '').replace(/\D/g, '');
+  document.querySelectorAll('.card').forEach(card => {
+    const el = card.querySelector('.order-number');
+    const num = (el ? el.textContent : '').replace(/\D/g, '');
+    card.style.display = (!termo || num.includes(termo)) ? '' : 'none';
+  });
+}
+document.getElementById('busca').addEventListener('input', aplicarFiltro);
 
 /* ---------- download da coluna em Excel ---------- */
 function baixarColuna(colId) {
