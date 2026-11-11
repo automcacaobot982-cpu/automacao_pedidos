@@ -115,10 +115,18 @@
 
   /* ===== CARTÃO ===== */
   .card{
+    position:relative;
     background:var(--surface);border:1px solid var(--line);
     border-radius:var(--r-sm);padding:12px 13px;
     box-shadow:var(--shadow-sm);border-left:4px solid var(--brand);
   }
+  .btn-lixo{
+    position:absolute;top:8px;right:8px;display:none;
+    width:26px;height:26px;border:none;border-radius:6px;cursor:pointer;
+    background:var(--red);padding:0;align-items:center;justify-content:center;
+  }
+  .btn-lixo:hover{background:#b5281b}
+  .card:hover .btn-lixo{display:inline-flex}
   .card.urgente{background:var(--red-tint);border-color:#f3c6bf;border-left-color:var(--red-border)}
 
   /* Número do pedido: negrito, espaçamento maior */
@@ -210,6 +218,10 @@ const SHEETS = {
   faturados: { id: '19YGc_k8-VCbuSb9hhM3SyoyLKT2HM_zlJmwhHeLUx2w', gid: '0' }, // pedidos_faturados
   retirados: { id: '1xFwKnV55LG-qfS-igCI1qR3MqoWvOKThXrZ0r69k-8w', gid: '0' }  // pedidos_retirados
 };
+
+/* URL do Apps Script da planilha pedidos_sistema — grava "1" na coluna E (cancelado).
+   Cole aqui a URL /exec depois de publicar o Apps Script (ver o arquivo .gs entregue). */
+const SHEETS_WEBAPP_URL_SISTEMA = 'https://script.google.com/macros/s/AKfycbzjKTXv9_i2pQ4NvnpIWc6mGvAoz-sw2iKY-318VrFsEB6qcDojxDh5HimJIUCFOKMu/exec';
 
 /* Lê uma planilha via gviz (JSONP) — evita bloqueio de CORS.
    Resolve com uma lista de linhas; cada célula vira { v, f }
@@ -313,6 +325,9 @@ function renderCard(pedido) {
   const urgente = pedido.urgente === 1 || pedido.urgente === '1';
   card.className = 'card' + (urgente ? ' urgente' : '');
   card.innerHTML = `
+    ${pedido.cancelavel ? `<button class="btn-lixo" data-num="${esc(pedido.numero)}" title="Cancelar pedido">
+      <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="#fff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18M8 6V4h8v2M6 6l1 14h10l1-14"/></svg>
+    </button>` : ''}
     <div class="order-number">${esc(pedido.numero)}</div>
     <div class="customer-name">${esc(pedido.cliente || '[0000] CLIENTE NÃO IDENTIFICADO')}</div>
     <div class="operator-name">${esc((pedido.operador || 'DESCONHECIDO').toUpperCase())}</div>
@@ -433,7 +448,8 @@ async function carregarKanban() {
 
     const card = renderCard({
       numero: p.numero, cliente: p.cliente, operador: p.operador, urgente: p.urgente,
-      dataRetirada: status === 'retirado' ? fmtDataHora(p.dataRetirada) : ''
+      dataRetirada: status === 'retirado' ? fmtDataHora(p.dataRetirada) : '',
+      cancelavel: status === 'pendente'   // botão de lixeira só na coluna Pendente
     });
     if (vencido) card.classList.add('vencido');    // oculto no uso normal (só a busca revela)
     container.appendChild(card);
@@ -506,10 +522,39 @@ function baixarColuna(colId) {
   }
 }
 
-// Clique nos botões de download (delegado no quadro, sobrevive às atualizações)
+/* ---------- cancelar pedido (grava "1" na coluna E de pedidos_sistema) ---------- */
+async function cancelarPedido(numero, botao) {
+  if (!SHEETS_WEBAPP_URL_SISTEMA) {
+    alert('Cancelamento não configurado: falta publicar o Apps Script da "pedidos_sistema" e colar a URL no arquivo (SHEETS_WEBAPP_URL_SISTEMA).');
+    return;
+  }
+  if (!confirm('Cancelar o pedido #' + numero + '?\nEle sairá do acompanhamento.')) return;
+
+  const card = botao.closest('.card');
+  botao.disabled = true;
+  try {
+    const r = await fetch(SHEETS_WEBAPP_URL_SISTEMA, {
+      method: 'POST',
+      headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+      body: JSON.stringify({ acao: 'cancelar', pedido: numero })
+    });
+    let resp = {};
+    try { resp = await r.json(); } catch (_) { resp = { ok: true }; }
+    if (resp && resp.ok === false) throw new Error(resp.erro || 'Falha ao cancelar.');
+    if (card) card.remove();      // some na hora (a base também atualiza no próximo refresh)
+    atualizarContadores();
+  } catch (err) {
+    alert('Não foi possível cancelar: ' + err.message);
+    botao.disabled = false;
+  }
+}
+
+// Cliques do quadro (delegado — sobrevive às atualizações): download e lixeira
 document.getElementById('board').addEventListener('click', e => {
-  const btn = e.target.closest('.btn-dl');
-  if (btn) baixarColuna(btn.getAttribute('data-col'));
+  const dl = e.target.closest('.btn-dl');
+  if (dl) { baixarColuna(dl.getAttribute('data-col')); return; }
+  const lixo = e.target.closest('.btn-lixo');
+  if (lixo) { cancelarPedido(lixo.getAttribute('data-num'), lixo); return; }
 });
 
 carregarKanban();
