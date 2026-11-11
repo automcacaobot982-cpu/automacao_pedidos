@@ -76,6 +76,8 @@
   }
   .busca::placeholder{color:#c3c6ea}
   .busca:focus{outline:none;background:#fff;color:var(--ink);border-color:var(--brand);box-shadow:0 0 0 3px rgba(0,173,238,.25)}
+  select.busca{width:210px;max-width:36vw;cursor:pointer}
+  select.busca option{color:#1e293b}
 
   /* ===== BOARD ===== */
   .kanban-board{
@@ -155,11 +157,12 @@
   /* ===== MOBILE (celular) ===== */
   @media (max-width:768px){
     /* Topbar compacta */
-    .topbar{gap:8px;padding:0 12px}
+    .topbar{gap:6px;padding:8px 12px;flex-wrap:wrap;height:auto}
     .topbar .tb-title{flex:0 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
     .topbar .tb-title small{display:none}
     .topbar .spacer{display:none}
-    .busca{flex:1;min-width:0;width:auto;max-width:none}
+    .busca{flex:1 1 130px;min-width:0;width:auto;max-width:none}
+    select.busca{flex:1 1 130px;max-width:none}
     .nav-btn{padding:8px 11px;font-size:12.5px}
 
     /* Cada coluna quase preenche a tela; swipe "com encaixe" entre elas */
@@ -184,6 +187,9 @@
   </div>
   <div class="spacer"></div>
   <input id="busca" class="busca" type="search" placeholder="Pesquisar nº do pedido..." inputmode="numeric" autocomplete="off">
+  <select id="filtroOperador" class="busca sel-op" title="Filtrar por operador">
+    <option value="">Todos os operadores</option>
+  </select>
   <div class="spacer"></div>
   <button id="btnInstall" class="nav-btn nav-btn-install hidden">⬇️ Baixar App</button>
   <a href="index.html" class="nav-btn">➕ Incluir</a>
@@ -466,29 +472,58 @@ async function carregarKanban() {
   });
 
   atualizarContadores();
-  aplicarFiltro();   // reaplica a pesquisa após cada atualização
+  popularFiltroOperador();   // atualiza a lista de operadores
+  aplicarFiltro();           // reaplica busca + filtro de operador
   const hora = new Date().toLocaleTimeString('pt-BR');
   document.getElementById('lastUpdate').textContent = falhas.length
     ? 'Atualizado às ' + hora + ' — sem acesso a: ' + falhas.join(', ')
     : 'Atualizado às ' + hora;
 }
 
-/* ---------- pesquisa por número do pedido ---------- */
+/* ---------- lista de operadores (preenchida pelos próprios pedidos) ---------- */
+function popularFiltroOperador() {
+  const sel = document.getElementById('filtroOperador');
+  const atual = sel.value;
+  const nomes = new Set();
+  document.querySelectorAll('.operator-name').forEach(el => {
+    const n = el.textContent.trim();
+    if (n && n !== 'DESCONHECIDO') nomes.add(n);
+  });
+  const ordenados = Array.from(nomes).sort((a, b) => a.localeCompare(b, 'pt-BR'));
+
+  sel.innerHTML = '';
+  const todos = document.createElement('option');
+  todos.value = ''; todos.textContent = 'Todos os operadores';
+  sel.appendChild(todos);
+  ordenados.forEach(n => {
+    const o = document.createElement('option');
+    o.value = n; o.textContent = n;
+    sel.appendChild(o);
+  });
+  if (atual && ordenados.includes(atual)) sel.value = atual;   // mantém a seleção
+}
+
+/* ---------- filtro: número do pedido + operador ---------- */
 function aplicarFiltro() {
   const termo = (document.getElementById('busca').value || '').replace(/\D/g, '');
+  const operador = document.getElementById('filtroOperador').value;
+
   document.querySelectorAll('.card').forEach(card => {
-    const el = card.querySelector('.order-number');
-    const num = (el ? el.textContent : '').replace(/\D/g, '');
-    if (!termo) {
-      // sem busca: esconde os retirados que já passaram das 12h (regra normal)
-      card.style.display = card.classList.contains('vencido') ? 'none' : '';
-    } else {
-      // com busca: mostra todos que batem, inclusive o histórico (+12h)
-      card.style.display = num.includes(termo) ? '' : 'none';
-    }
+    const elNum = card.querySelector('.order-number');
+    const num = (elNum ? elNum.textContent : '').replace(/\D/g, '');
+    const elOp = card.querySelector('.operator-name');
+    const op = (elOp ? elOp.textContent : '').trim();
+
+    const opOk = !operador || op === operador;
+    const buscaOk = termo
+      ? num.includes(termo)                       // com busca: revela histórico (+12h)
+      : !card.classList.contains('vencido');      // sem busca: esconde retirados +12h
+
+    card.style.display = (opOk && buscaOk) ? '' : 'none';
   });
 }
 document.getElementById('busca').addEventListener('input', aplicarFiltro);
+document.getElementById('filtroOperador').addEventListener('change', aplicarFiltro);
 
 /* ---------- download da coluna em Excel ---------- */
 function baixarColuna(colId) {
