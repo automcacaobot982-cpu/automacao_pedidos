@@ -324,9 +324,13 @@ function renderCard(pedido) {
 function atualizarContadores() {
   COLUNAS.forEach(col => {
     const container = document.getElementById('col-' + col.id);
-    const n = container.childElementCount;
-    document.getElementById('cnt-' + col.id).textContent = n;
-    if (n === 0) container.innerHTML = '<div class="empty-col">Sem pedidos</div>';
+    // conta só os cartões exibidos normalmente (retirados +12h ficam de fora)
+    const visiveis = container.querySelectorAll('.card:not(.vencido)').length;
+    document.getElementById('cnt-' + col.id).textContent = visiveis;
+    // placeholder só quando não há NENHUM cartão (para não apagar o histórico oculto)
+    if (!container.querySelector('.card')) {
+      container.innerHTML = '<div class="empty-col">Sem pedidos</div>';
+    }
   });
 }
 
@@ -412,10 +416,10 @@ async function carregarKanban() {
     const p = pedidos[num];
     if (p.cancelado) return;                                      // cancelado some
 
-    let status = 'pendente';
+    let status = 'pendente', vencido = false;
     if (p.retirado) {
-      if (retiradoVencido(p.dataRetirada)) return;               // retirado há +12h some
       status = 'retirado';
+      vencido = retiradoVencido(p.dataRetirada);   // +12h: fica oculto, mas disponível na busca
     } else if (p.faturado) {
       status = 'faturado';
     } else if (p.aprovado) {
@@ -425,11 +429,17 @@ async function carregarKanban() {
     }
 
     const container = document.getElementById('col-' + status);
-    if (container) {
-      container.appendChild(renderCard({
-        numero: p.numero, cliente: p.cliente, operador: p.operador, urgente: p.urgente,
-        dataRetirada: status === 'retirado' ? fmtDataHora(p.dataRetirada) : ''
-      }));
+    if (!container) return;
+
+    const card = renderCard({
+      numero: p.numero, cliente: p.cliente, operador: p.operador, urgente: p.urgente,
+      dataRetirada: status === 'retirado' ? fmtDataHora(p.dataRetirada) : ''
+    });
+    if (vencido) card.classList.add('vencido');    // oculto no uso normal (só a busca revela)
+    container.appendChild(card);
+
+    // Excel: exporta o que é exibido normalmente (retirados +12h ficam de fora)
+    if (!vencido) {
       (dadosColunas[status] = dadosColunas[status] || []).push({
         numero: p.numero,
         cliente: p.cliente || '',
@@ -453,7 +463,13 @@ function aplicarFiltro() {
   document.querySelectorAll('.card').forEach(card => {
     const el = card.querySelector('.order-number');
     const num = (el ? el.textContent : '').replace(/\D/g, '');
-    card.style.display = (!termo || num.includes(termo)) ? '' : 'none';
+    if (!termo) {
+      // sem busca: esconde os retirados que já passaram das 12h (regra normal)
+      card.style.display = card.classList.contains('vencido') ? 'none' : '';
+    } else {
+      // com busca: mostra todos que batem, inclusive o histórico (+12h)
+      card.style.display = num.includes(termo) ? '' : 'none';
+    }
   });
 }
 document.getElementById('busca').addEventListener('input', aplicarFiltro);
