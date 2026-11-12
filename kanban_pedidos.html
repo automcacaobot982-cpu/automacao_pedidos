@@ -154,6 +154,17 @@
   .urgente .op-badge{background:#f7d4cd;color:#a02214}
   .empty-col{color:var(--ink-3);font-size:.75rem;text-align:center;padding:14px 0;font-style:italic}
 
+  /* ===== DESKTOP: as 9 colunas se ajustam à largura da tela ===== */
+  @media (min-width:769px){
+    .kanban-board{gap:10px;padding:14px 16px}
+    .kanban-column{flex:1 1 0;min-width:0;width:auto}        /* dividem a largura igualmente */
+    .column-header{padding:10px 11px;font-size:11.5px;letter-spacing:.2px}
+    .cards-container{padding:8px}
+    .card{padding:10px 11px}
+    .order-number{font-size:1.05rem;letter-spacing:1.5px}
+    .customer-name{font-size:.76rem}
+  }
+
   /* ===== MOBILE (celular) ===== */
   @media (max-width:768px){
     /* Topbar compacta */
@@ -591,6 +602,35 @@ document.getElementById('board').addEventListener('click', e => {
   const lixo = e.target.closest('.btn-lixo');
   if (lixo) { cancelarPedido(lixo.getAttribute('data-num'), lixo); return; }
 });
+
+/* ---------- rolagem automática (carrossel) das colunas cheias ---------- */
+const ROLAGEM_PASSO     = 1;      // pixels por passo (quanto maior, mais rápido)
+const ROLAGEM_INTERVALO = 50;     // ms entre os passos
+const ROLAGEM_PAUSA_FIM = 2000;   // ms parado no fim antes de voltar ao topo
+const _esperandoFim = new WeakMap();
+
+setInterval(() => {
+  document.querySelectorAll('.cards-container').forEach(cont => {
+    // só rola se a coluna tiver mais cartões do que cabe (barra de rolagem)
+    if (cont.scrollHeight <= cont.clientHeight + 2) return;
+
+    // pausa se o mouse estiver em cima da coluna
+    const col = cont.closest('.kanban-column');
+    if (col && col.matches(':hover')) return;
+
+    // chegou ao fim: aguarda um instante e volta ao topo
+    const ate = _esperandoFim.get(cont);
+    if (ate) {
+      if (Date.now() >= ate) { _esperandoFim.delete(cont); cont.scrollTop = 0; }
+      return;
+    }
+
+    cont.scrollTop += ROLAGEM_PASSO;
+    if (cont.scrollTop + cont.clientHeight >= cont.scrollHeight - 1) {
+      _esperandoFim.set(cont, Date.now() + ROLAGEM_PAUSA_FIM);
+    }
+  });
+}, ROLAGEM_INTERVALO);
 
 carregarKanban();
 setInterval(carregarKanban, 30000); // recarrega a cada 30s
