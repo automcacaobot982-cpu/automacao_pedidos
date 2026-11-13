@@ -144,15 +144,59 @@
   /* Operador: MAIÚSCULO */
   .operator-name{
     font-size:.72rem;color:var(--ink-2);text-transform:uppercase;letter-spacing:.3px;
-    border-top:1px dashed var(--line-2);padding-top:6px;
+    border-top:1px dashed var(--line-2);padding-top:6px;padding-right:28px;
   }
-  .retirada-info{font-size:.7rem;color:var(--brand-2);font-weight:700;margin-top:5px;font-family:var(--num)}
+  .retirada-info{font-size:.7rem;color:var(--brand-2);font-weight:700;margin-top:5px;font-family:var(--num);padding-right:28px}
+
+  /* Botão (i) — canto inferior direito do cartão: abre a linha do tempo */
+  .btn-info{
+    position:absolute;bottom:8px;right:8px;
+    width:22px;height:22px;padding:0;border:1px solid var(--line);background:#fff;color:var(--brand-2);
+    border-radius:50%;cursor:pointer;font-size:12px;font-weight:700;line-height:1;
+    font-family:var(--num);font-style:italic;
+    display:inline-flex;align-items:center;justify-content:center;
+  }
+  .btn-info:hover{background:var(--brand-tint);border-color:var(--brand)}
   .op-badge{
     display:inline-block;font-size:.68rem;background:var(--brand-tint);color:var(--brand-2);
     padding:2px 7px;border-radius:4px;margin-top:6px;font-weight:700;font-family:var(--num);letter-spacing:.5px;
   }
   .urgente .op-badge{background:#f7d4cd;color:#a02214}
   .empty-col{color:var(--ink-3);font-size:.75rem;text-align:center;padding:14px 0;font-style:italic}
+
+  /* ===== JANELA (POP-UP) DA LINHA DO TEMPO ===== */
+  .modal-ov{
+    position:fixed;inset:0;background:rgba(9,30,66,.45);z-index:1000;padding:20px;
+    display:none;align-items:center;justify-content:center;
+  }
+  .modal-ov.open{display:flex}
+  .modal-card{
+    background:#fff;border-radius:12px;max-width:400px;width:100%;max-height:85vh;overflow:auto;
+    box-shadow:0 20px 60px rgba(0,0,0,.3);
+  }
+  .modal-head{
+    display:flex;justify-content:space-between;align-items:flex-start;gap:10px;
+    padding:16px 18px;border-bottom:1px solid var(--line);position:sticky;top:0;background:#fff;
+  }
+  .modal-head .mh-num{font-family:var(--num);font-size:1.25rem;font-weight:700;letter-spacing:2px;color:#091e42}
+  .modal-head .mh-cli{font-size:.72rem;text-transform:uppercase;color:var(--ink-2);margin-top:3px;font-weight:700;line-height:1.3}
+  .modal-x{border:none;background:none;font-size:1.5rem;line-height:1;cursor:pointer;color:var(--ink-2);padding:0 2px}
+  .modal-x:hover{color:var(--ink)}
+  .modal-body{padding:20px 18px}
+
+  /* linha do tempo vertical */
+  .timeline{list-style:none;margin:0;padding:0 2px}
+  .timeline .tl{position:relative;padding:0 0 20px 28px}
+  .timeline .tl:last-child{padding-bottom:0}
+  .timeline .tl::before{content:'';position:absolute;left:7px;top:17px;bottom:-3px;width:2px;background:var(--line-2)}
+  .timeline .tl:last-child::before{display:none}
+  .tl-dot{position:absolute;left:0;top:1px;width:16px;height:16px;border-radius:50%;border:2px solid var(--line-2);background:#fff;box-sizing:border-box}
+  .tl.feito .tl-dot{background:var(--brand);border-color:var(--brand)}
+  .tl.feito .tl-label{color:var(--ink)}
+  .tl.pend,.tl.breve{opacity:.55}
+  .tl-label{font-weight:700;font-size:.78rem;color:var(--ink);text-transform:uppercase;letter-spacing:.3px;line-height:1.3}
+  .tl-date{font-size:.75rem;color:var(--ink-2);font-family:var(--num);margin-top:2px}
+  .tl.breve .tl-date{font-style:italic}
 
   /* ===== DESKTOP: as 9 colunas se ajustam à largura da tela ===== */
   @media (min-width:769px){
@@ -291,6 +335,23 @@ const COLUNAS = [
 // Guarda a lista de pedidos de cada coluna (para o download em Excel)
 let dadosColunas = {};
 
+// Dados da linha do tempo de cada pedido (nº -> datas de cada etapa)
+let linhaTempo = {};
+
+/* Etapas da linha do tempo, na ordem. As quatro etapas intermediárias ainda
+   não têm base de dados própria, então aparecem como "(em breve)". */
+const ETAPAS = [
+  { rotulo:'Pedido criado em',                 chave:'dtCriado'    },
+  { rotulo:'Pedido enviado para separação em', chave:'dtSeparacao' },
+  { rotulo:'Pedido em compras desde',          breve:true          },
+  { rotulo:'Pedido liberado para produção em', breve:true          },
+  { rotulo:'Pedido em produção desde',         breve:true          },
+  { rotulo:'Pedido em conferência desde',      breve:true          },
+  { rotulo:'Pedido aprovado em',               chave:'dtAprovado'  },
+  { rotulo:'Pedido faturado em',               chave:'dtFaturado'  },
+  { rotulo:'Pedido retirado em',               chave:'dtRetirado'  }
+];
+
 /* ---------- utilitários de data ---------- */
 function parseDate(dateStr) {
   if (!dateStr) return null;
@@ -348,9 +409,34 @@ function renderCard(pedido) {
     <div class="order-number">${esc(pedido.numero)}</div>
     <div class="customer-name">${esc(pedido.cliente || '[0000] CLIENTE NÃO IDENTIFICADO')}</div>
     <div class="operator-name">${esc((pedido.operador || 'DESCONHECIDO').toUpperCase())}</div>
-    ${pedido.dataRetirada ? `<div class="retirada-info">Retirado em ${esc(pedido.dataRetirada)}</div>` : ''}`;
+    ${pedido.dataRetirada ? `<div class="retirada-info">Retirado em ${esc(pedido.dataRetirada)}</div>` : ''}
+    <button class="btn-info" data-info="${esc(pedido.numero)}" title="Linha do tempo do pedido">i</button>`;
   return card;
 }
+
+/* ---------- janela (pop-up) da linha do tempo ---------- */
+function abrirLinhaTempo(numero) {
+  const d = linhaTempo[numero] || {};
+  document.getElementById('mlNum').textContent = '#' + numero;
+  document.getElementById('mlCli').textContent = d.cliente || '';
+  document.getElementById('mlLista').innerHTML = ETAPAS.map(e => {
+    if (e.breve) {
+      return `<li class="tl breve"><span class="tl-dot"></span><div>
+        <div class="tl-label">${e.rotulo}</div>
+        <div class="tl-date">(em breve)</div></div></li>`;
+    }
+    const data = fmtDataHora(d[e.chave] || '');
+    const feito = !!data;
+    return `<li class="tl ${feito ? 'feito' : 'pend'}"><span class="tl-dot"></span><div>
+      <div class="tl-label">${e.rotulo}</div>
+      <div class="tl-date">${feito ? esc(data) : '— sem registro'}</div></div></li>`;
+  }).join('');
+  document.getElementById('modalLinha').classList.add('open');
+}
+function fecharLinhaTempo() {
+  document.getElementById('modalLinha').classList.remove('open');
+}
+document.addEventListener('keydown', e => { if (e.key === 'Escape') fecharLinhaTempo(); });
 
 /* ---------- contadores + placeholder ---------- */
 function atualizarContadores() {
@@ -381,6 +467,7 @@ function atualizarContadores() {
 async function carregarKanban() {
   montarColunas();
   dadosColunas = {};   // zera os dados de exportação a cada atualização
+  linhaTempo  = {};    // zera os dados da linha do tempo a cada atualização
 
   // Lê as bases de forma tolerante: se uma falhar (ex.: não compartilhada),
   // as demais continuam funcionando — não quebra o kanban inteiro.
@@ -403,15 +490,21 @@ async function carregarKanban() {
   const pedidos = {};
   const obter = num => (pedidos[num] || (pedidos[num] = {
     numero: num, cliente: '', operador: '', urgente: 0, cancelado: false,
-    emSeparacao: false, aprovado: false, faturado: false, retirado: false, dataRetirada: ''
+    emSeparacao: false, aprovado: false, faturado: false, retirado: false, dataRetirada: '',
+    dtCriado: '', dtSeparacao: '', dtAprovado: '', dtFaturado: ''
   }));
 
+  /* ===== MAPA DAS COLUNAS DE DATA (ajuste aqui se alguma estiver errada) =====
+     Presumi que cada base guarda a data/hora na coluna A (a 1ª coluna),
+     exceto 'aprovados', cujo número está em A e a data em B. Se não bater,
+     é só trocar o índice: row[0]=A, row[1]=B, row[2]=C, row[3]=D, row[4]=E. */
   sistema.forEach(row => {
     const num = numCel(row[1]); if (!num) return;                 // B = número
     const p = obter(num);
     const cli = txtCel(row[2]); if (cli) p.cliente = cli;         // C = cliente
     const vend = txtCel(row[3]); if (vend && !p.operador) p.operador = vend; // D = vendedor
     if (txtCel(row[4]) === '1') p.cancelado = true;              // E = cancelado
+    const dc = txtCel(row[0]); if (dc && !p.dtCriado) p.dtCriado = dc;       // A = data de criação
   });
 
   separacao.forEach(row => {
@@ -420,19 +513,23 @@ async function carregarKanban() {
     p.emSeparacao = true;
     if (txtCel(row[2]) === '1') p.urgente = 1;                    // C = urgente
     const op = txtCel(row[3]); if (op) p.operador = op;           // D = operador (prioritário)
+    const ds = txtCel(row[0]); if (ds && !p.dtSeparacao) p.dtSeparacao = ds; // A = data de envio p/ separação
   });
 
   aprovados.forEach(row => {
     const num = numCel(row[0]); if (!num) return;                 // A = número
-    obter(num).aprovado = true;
+    const p = obter(num);
+    p.aprovado = true;
+    const da = txtCel(row[1]); if (da) p.dtAprovado = da;          // B = data de aprovação
   });
 
   faturados.forEach(row => {
     // Coluna E pode ter mais de um pedido por nota (ex.: "94308, 94309")
     const campoE = txtCel(row[4]); if (!campoE) return;           // E = número(s)
+    const df = txtCel(row[0]);                                    // A = data de faturamento
     campoE.split(',').forEach(parte => {
       const num = String(parte).replace(/[^\d]/g, '');
-      if (num) obter(num).faturado = true;
+      if (num) { const p = obter(num); p.faturado = true; if (df) p.dtFaturado = df; }
     });
   });
 
@@ -447,6 +544,16 @@ async function carregarKanban() {
   Object.keys(pedidos).forEach(num => {
     const p = pedidos[num];
     if (p.cancelado) return;                                      // cancelado some
+
+    // guarda as datas para a linha do tempo (inclui retirados ocultos +12h)
+    linhaTempo[p.numero] = {
+      cliente:     p.cliente || '',
+      dtCriado:    p.dtCriado,
+      dtSeparacao: p.dtSeparacao,
+      dtAprovado:  p.dtAprovado,
+      dtFaturado:  p.dtFaturado,
+      dtRetirado:  p.dataRetirada
+    };
 
     let status = 'pendente', vencido = false;
     if (p.retirado) {
@@ -601,6 +708,8 @@ document.getElementById('board').addEventListener('click', e => {
   if (dl) { baixarColuna(dl.getAttribute('data-col')); return; }
   const lixo = e.target.closest('.btn-lixo');
   if (lixo) { cancelarPedido(lixo.getAttribute('data-num'), lixo); return; }
+  const info = e.target.closest('.btn-info');
+  if (info) { abrirLinhaTempo(info.getAttribute('data-info')); return; }
 });
 
 /* ---------- rolagem automática (carrossel) das colunas cheias ---------- */
@@ -680,5 +789,19 @@ if ('serviceWorker' in navigator) {
   window.addEventListener('appinstalled', () => mostrar(false));
 })();
 </script>
+
+<!-- Janela (pop-up) da linha do tempo do pedido -->
+<div class="modal-ov" id="modalLinha" onclick="if(event.target===this)fecharLinhaTempo()">
+  <div class="modal-card" role="dialog" aria-modal="true" aria-labelledby="mlNum">
+    <div class="modal-head">
+      <div>
+        <div class="mh-num" id="mlNum"></div>
+        <div class="mh-cli" id="mlCli"></div>
+      </div>
+      <button class="modal-x" onclick="fecharLinhaTempo()" title="Fechar" aria-label="Fechar">×</button>
+    </div>
+    <div class="modal-body"><ol class="timeline" id="mlLista"></ol></div>
+  </div>
+</div>
 </body>
 </html>
