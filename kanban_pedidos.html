@@ -196,6 +196,7 @@
   .tl.pend,.tl.breve{opacity:.55}
   .tl-label{font-weight:700;font-size:.78rem;color:var(--ink);text-transform:uppercase;letter-spacing:.3px;line-height:1.3}
   .tl-date{font-size:.75rem;color:var(--ink-2);font-family:var(--num);margin-top:2px}
+  .tl-sub{font-size:.72rem;color:var(--ink-2);text-transform:uppercase;letter-spacing:.3px;margin-top:2px}
   .tl.breve .tl-date{font-style:italic}
 
   /* ===== DESKTOP: as 9 colunas se ajustam à largura da tela ===== */
@@ -347,7 +348,7 @@ const ETAPAS = [
   { rotulo:'Pedido liberado para produção em', breve:true          },
   { rotulo:'Pedido em produção desde',         breve:true          },
   { rotulo:'Pedido em conferência desde',      breve:true          },
-  { rotulo:'Pedido aprovado em',               chave:'dtAprovado'  },
+  { rotulo:'Pedido aprovado em',               chave:'dtAprovado', extraChave:'aprovadoPor', extraRotulo:'por' },
   { rotulo:'Pedido faturado em',               chave:'dtFaturado'  },
   { rotulo:'Pedido retirado em',               chave:'dtRetirado'  }
 ];
@@ -409,7 +410,6 @@ function renderCard(pedido) {
     <div class="order-number">${esc(pedido.numero)}</div>
     <div class="customer-name">${esc(pedido.cliente || '[0000] CLIENTE NÃO IDENTIFICADO')}</div>
     <div class="operator-name">${esc((pedido.operador || 'DESCONHECIDO').toUpperCase())}</div>
-    ${pedido.dataRetirada ? `<div class="retirada-info">Retirado em ${esc(pedido.dataRetirada)}</div>` : ''}
     <button class="btn-info" data-info="${esc(pedido.numero)}" title="Linha do tempo do pedido">i</button>`;
   return card;
 }
@@ -427,9 +427,13 @@ function abrirLinhaTempo(numero) {
     }
     const data = fmtDataHora(d[e.chave] || '');
     const feito = !!data;
+    let extra = '';
+    if (feito && e.extraChave && d[e.extraChave]) {
+      extra = `<div class="tl-sub">${esc(e.extraRotulo ? e.extraRotulo + ' ' : '')}${esc(d[e.extraChave])}</div>`;
+    }
     return `<li class="tl ${feito ? 'feito' : 'pend'}"><span class="tl-dot"></span><div>
       <div class="tl-label">${e.rotulo}</div>
-      <div class="tl-date">${feito ? esc(data) : '— sem registro'}</div></div></li>`;
+      <div class="tl-date">${feito ? esc(data) : '— sem registro'}</div>${extra}</div></li>`;
   }).join('');
   document.getElementById('modalLinha').classList.add('open');
 }
@@ -491,13 +495,15 @@ async function carregarKanban() {
   const obter = num => (pedidos[num] || (pedidos[num] = {
     numero: num, cliente: '', operador: '', urgente: 0, cancelado: false,
     emSeparacao: false, aprovado: false, faturado: false, retirado: false, dataRetirada: '',
-    dtCriado: '', dtSeparacao: '', dtAprovado: '', dtFaturado: ''
+    dtCriado: '', dtSeparacao: '', dtAprovado: '', aprovadoPor: '', dtFaturado: ''
   }));
 
-  /* ===== MAPA DAS COLUNAS DE DATA (ajuste aqui se alguma estiver errada) =====
-     Presumi que cada base guarda a data/hora na coluna A (a 1ª coluna),
-     exceto 'aprovados', cujo número está em A e a data em B. Se não bater,
-     é só trocar o índice: row[0]=A, row[1]=B, row[2]=C, row[3]=D, row[4]=E. */
+  /* ===== MAPA DAS COLUNAS DE DATA (índices: row[0]=A, [1]=B, [2]=C, [3]=D, [4]=E) =====
+     - pedidos_sistema  : criação  -> A
+     - pedidos_separacao: separação-> A
+     - pedidos_aprovados: nº em A | quem aprovou em B | data da aprovação em C
+     - pedidos_faturados: nº(s) em E | data de emissão em D
+     - pedidos_retirados: retirada -> B */
   sistema.forEach(row => {
     const num = numCel(row[1]); if (!num) return;                 // B = número
     const p = obter(num);
@@ -520,13 +526,14 @@ async function carregarKanban() {
     const num = numCel(row[0]); if (!num) return;                 // A = número
     const p = obter(num);
     p.aprovado = true;
-    const da = txtCel(row[1]); if (da) p.dtAprovado = da;          // B = data de aprovação
+    const ap = txtCel(row[1]); if (ap) p.aprovadoPor = ap;        // B = quem aprovou
+    const da = txtCel(row[2]); if (da) p.dtAprovado = da;         // C = data da aprovação
   });
 
   faturados.forEach(row => {
     // Coluna E pode ter mais de um pedido por nota (ex.: "94308, 94309")
     const campoE = txtCel(row[4]); if (!campoE) return;           // E = número(s)
-    const df = txtCel(row[0]);                                    // A = data de faturamento
+    const df = txtCel(row[3]);                                    // D = data de emissão
     campoE.split(',').forEach(parte => {
       const num = String(parte).replace(/[^\d]/g, '');
       if (num) { const p = obter(num); p.faturado = true; if (df) p.dtFaturado = df; }
@@ -551,6 +558,7 @@ async function carregarKanban() {
       dtCriado:    p.dtCriado,
       dtSeparacao: p.dtSeparacao,
       dtAprovado:  p.dtAprovado,
+      aprovadoPor: p.aprovadoPor,
       dtFaturado:  p.dtFaturado,
       dtRetirado:  p.dataRetirada
     };
@@ -587,6 +595,17 @@ async function carregarKanban() {
         urgente: p.urgente ? 'SIM' : ''
       });
     }
+  });
+
+  // Urgentes (vermelhos) vão para o TOPO de cada coluna, mantendo entre eles a
+  // ordem crescente (menor -> maior). Os demais seguem abaixo, também crescente.
+  // (os cartões já foram inseridos em ordem crescente, então basta "puxar" os
+  //  urgentes para cima na mesma ordem.)
+  COLUNAS.forEach(col => {
+    const cont = document.getElementById('col-' + col.id);
+    if (!cont) return;
+    const urgentes = Array.from(cont.querySelectorAll('.card.urgente'));
+    urgentes.reverse().forEach(c => cont.insertBefore(c, cont.firstChild));
   });
 
   atualizarContadores();
